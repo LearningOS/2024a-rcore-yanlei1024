@@ -77,16 +77,27 @@ pub fn load_apps() {
     // load apps
     for i in 0..num_app {
         let base_i = get_base_i(i);
-        // clear region
-        (base_i..base_i + APP_SIZE_LIMIT)
-            .for_each(|addr| unsafe { (addr as *mut u8).write_volatile(0) });
-        // load app from data section to memory
-        let src = unsafe {
-            core::slice::from_raw_parts(app_start[i] as *const u8, app_start[i + 1] - app_start[i])
-        };
-        let dst = unsafe { core::slice::from_raw_parts_mut(base_i as *mut u8, src.len()) };
-        dst.copy_from_slice(src);
+        unsafe {
+            let src = core::slice::from_raw_parts(app_start[i] as *const u8, app_start[i + 1] - app_start[i]);
+            let dst = core::slice::from_raw_parts_mut(base_i as *mut u8, src.len());
+            dst.copy_from_slice(src);
+            core::slice::from_raw_parts_mut((base_i + src.len()) as *mut u8, APP_SIZE_LIMIT - src.len())
+                .fill(0);
+        }
     }
+    // for i in 0..num_app {
+    //     let base_i = get_base_i(i).;
+    //     // clear region
+    //     (base_i..base_i + APP_SIZE_LIMIT)
+    //         .for_each(|addr| unsafe { (addr as *mut u8).write_volatile(0) });
+    //     // load app from data section to memory
+    //     let src = unsafe {
+    //         core::slice::from_raw_parts(app_start[i] as *const u8, app_start[i + 1] - app_start[i])
+    //     };
+    //     println!("{}\t{}", app_start[i + 1] - app_start[i], src.len());
+    //     let dst = unsafe { core::slice::from_raw_parts_mut(base_i as *mut u8, src.len()) };
+    //     dst.copy_from_slice(src);
+    // }
 }
 
 /// get app info with entry and sp and save `TrapContext` in kernel stack
