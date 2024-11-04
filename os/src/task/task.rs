@@ -14,6 +14,12 @@ pub struct TaskControlBlock {
     /// Maintain the execution status of the current process
     pub task_status: TaskStatus,
 
+    /// The task syscall times
+    pub task_syscall_times: [u32; MAX_SYSCALL_NUM], 
+
+    /// The time the task was first run
+    pub task_first_run_time: Option<usize>, 
+
     /// Application address space
     pub memory_set: MemorySet,
 
@@ -63,6 +69,8 @@ impl TaskControlBlock {
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            task_first_run_time: None, 
+            task_syscall_times: [0; MAX_SYSCALL_NUM], 
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
