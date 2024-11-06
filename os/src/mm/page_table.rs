@@ -171,3 +171,11 @@ pub fn translated_byte_buffer(token: usize, ptr: *const u8, len: usize) -> Vec<&
     }
     v
 }
+
+// pub fn translated_anything<T>(token: usize, ptr: *mut usize) -> &'static mut T {
+//     let page_table = crate::mm::PageTable::from_token(token);
+//     let va = crate::mm::VirtAddr::from(ptr as usize);
+//     let mut pa: super::PhysAddr = page_table.translate(va.floor()).unwrap().ppn().into();
+//     pa.0 +=  va.page_offset();
+//     pa.get_mut()
+// }

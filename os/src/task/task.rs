@@ -1,6 +1,6 @@
 //! Types related to task management
 use super::TaskContext;
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM,  TRAP_CONTEXT_BASE};
 use crate::mm::{
     kernel_stack_position, MapPermission, MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE,
 };
@@ -15,7 +15,7 @@ pub struct TaskControlBlock {
     pub task_status: TaskStatus,
 
     /// Application address space
-    pub memory_set: MemorySet,
+    pub memory_set: alloc::sync::Arc<crate::sync::UPSafeCell<MemorySet>>,
 
     /// The phys page number of trap context
     pub trap_cx_ppn: PhysPageNum,
@@ -28,6 +28,12 @@ pub struct TaskControlBlock {
 
     /// Program break
     pub program_brk: usize,
+
+    /// The task syscall times
+    pub task_syscall_times: [u32; MAX_SYSCALL_NUM], 
+
+    /// The time the task was first run
+    pub task_first_run_time: Option<usize>, 
 }
 
 impl TaskControlBlock {
@@ -37,7 +43,7 @@ impl TaskControlBlock {
     }
     /// get the user token
     pub fn get_user_token(&self) -> usize {
-        self.memory_set.token()
+        self.memory_set.exclusive_access().token()
     }
     /// Based on the elf info in program, build the contents of task in a new address space
     pub fn new(elf_data: &[u8], app_id: usize) -> Self {
@@ -58,11 +64,13 @@ impl TaskControlBlock {
         let task_control_block = Self {
             task_status,
             task_cx: TaskContext::goto_trap_return(kernel_stack_top),
-            memory_set,
+            memory_set: alloc::sync::Arc::new(unsafe { crate::sync::UPSafeCell::new(memory_set) }),
             trap_cx_ppn,
             base_size: user_sp,
             heap_bottom: user_sp,
             program_brk: user_sp,
+            task_syscall_times: [0; MAX_SYSCALL_NUM], 
+            task_first_run_time: None, 
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.get_trap_cx();
@@ -83,10 +91,10 @@ impl TaskControlBlock {
             return None;
         }
         let result = if size < 0 {
-            self.memory_set
+            self.memory_set.exclusive_access()
                 .shrink_to(VirtAddr(self.heap_bottom), VirtAddr(new_brk as usize))
         } else {
-            self.memory_set
+            self.memory_set.exclusive_access()
                 .append_to(VirtAddr(self.heap_bottom), VirtAddr(new_brk as usize))
         };
         if result {
