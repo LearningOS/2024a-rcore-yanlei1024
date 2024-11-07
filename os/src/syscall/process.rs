@@ -1,14 +1,15 @@
 //! Process management syscalls
+use core::mem::size_of;
+
 use alloc::sync::Arc;
 
 use crate::{
     config::MAX_SYSCALL_NUM,
     loader::get_app_data_by_name,
-    mm::{translated_refmut, translated_str},
+    mm::{translated_refmut, translated_str, MapPermission, VirtAddr},
     task::{
-        add_task, current_task, current_user_token, exit_current_and_run_next,
-        suspend_current_and_run_next, TaskStatus,
-    },
+        add_task, current_task, current_user_token, exit_current_and_run_next, get_current_task_first_run_time, get_current_task_memory_set, get_current_task_syscall_times, suspend_current_and_run_next, TaskStatus
+    }, timer::{get_time_ms, get_time_us},
 };
 
 #[repr(C)]
@@ -106,7 +107,7 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
         // ++++ temporarily access child PCB exclusively
         let exit_code = child.inner_exclusive_access().exit_code;
         // ++++ release child PCB
-        *translated_refmut(inner.memory_set.token(), exit_code_ptr) = exit_code;
+        *translated_refmut(inner.memory_set.exclusive_access().token(), exit_code_ptr) = exit_code;
         found_pid as isize
     } else {
         -2
@@ -117,41 +118,72 @@ pub fn sys_waitpid(pid: isize, exit_code_ptr: *mut i32) -> isize {
 /// YOUR JOB: get time with second and microsecond
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TimeVal`] is splitted by two pages ?
-pub fn sys_get_time(_ts: *mut TimeVal, _tz: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_get_time NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_get_time(ts: *mut TimeVal, _tz: usize) -> isize {
+    trace!("kernel:pid[{}] sys_get_time", current_task().unwrap().pid.0);
+    let us = get_time_us();
+    let mut time_val = &TimeVal {
+        sec: us / 1_000_000,
+        usec: us % 1_000_000,
+    } as *const TimeVal as *const u8;
+    let ts = crate::mm::translated_byte_buffer(current_user_token(), ts as *const u8, size_of::<TimeVal>());
+    for dst in ts {
+        unsafe {
+            time_val.copy_to(dst.as_mut_ptr(), dst.len());
+            time_val = time_val.add(dst.len());
+        }
+    }
+    0
 }
 
 /// YOUR JOB: Finish sys_task_info to pass testcases
 /// HINT: You might reimplement it with virtual memory management.
 /// HINT: What if [`TaskInfo`] is splitted by two pages ?
-pub fn sys_task_info(_ti: *mut TaskInfo) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_task_info NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_task_info(ti: *mut TaskInfo) -> isize {
+    trace!("kernel:pid[{}] sys_task_info", current_task().unwrap().pid.0);
+    let mut task_info = &TaskInfo {
+        status: TaskStatus::Running,
+        syscall_times: get_current_task_syscall_times(),
+        time: get_time_ms() - get_current_task_first_run_time(),
+    } as *const _ as *const u8;
+    let ti = crate::mm::translated_byte_buffer(current_user_token(), ti as *const u8, size_of::<TaskInfo>());
+    for dst in ti {
+        unsafe {
+            task_info.copy_to(dst.as_mut_ptr(), dst.len());
+            task_info = task_info.add(dst.len());
+        }
+    }
+    0
 }
 
 /// YOUR JOB: Implement mmap.
-pub fn sys_mmap(_start: usize, _len: usize, _port: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_mmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_mmap(start: usize, len: usize, port: usize) -> isize {
+    trace!("kernel:pid[{}] sys_mmap", current_task().unwrap().pid.0);
+    let start_va = VirtAddr::from(start);
+    if start_va.floor().0 << 12 != start_va.0 || port & !7 != 0 || port & 7 == 0 {
+        return -1; 
+    }
+    let end_va = VirtAddr::from(start + len);
+    let permission = MapPermission::from_bits((port as u8) << 1).unwrap() | MapPermission::U;
+    let memorey_set = get_current_task_memory_set();
+    let mut memorey_set = memorey_set.exclusive_access();
+    if memorey_set.conflicts_check(start_va, end_va) {
+        return -1;
+    }
+    memorey_set.insert_framed_area(start_va, end_va, permission);
+    0
 }
 
 /// YOUR JOB: Implement munmap.
-pub fn sys_munmap(_start: usize, _len: usize) -> isize {
-    trace!(
-        "kernel:pid[{}] sys_munmap NOT IMPLEMENTED",
-        current_task().unwrap().pid.0
-    );
-    -1
+pub fn sys_munmap(start: usize, len: usize) -> isize {
+    trace!("kernel:pid[{}] sys_munmap", current_task().unwrap().pid.0);
+    let start_va = VirtAddr::from(start);
+    if start_va.floor().0 << 12 != start_va.0 {
+        return -1; 
+    }
+    let end_va = VirtAddr::from(start + len);
+    let memorey_set = get_current_task_memory_set();
+    let mut memorey_set = memorey_set.exclusive_access();
+    memorey_set.remove_framed_area(start_va, end_va)
 }
 
 /// change data segment size

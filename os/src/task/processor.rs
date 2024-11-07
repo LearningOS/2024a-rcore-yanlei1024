@@ -7,7 +7,10 @@
 use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{TaskContext, TaskControlBlock};
+use crate::config::MAX_SYSCALL_NUM;
+use crate::mm::MemorySet;
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -44,6 +47,36 @@ impl Processor {
     pub fn current(&self) -> Option<Arc<TaskControlBlock>> {
         self.current.as_ref().map(Arc::clone)
     }
+
+    fn get_task_syscall_times(&self) -> [u32; MAX_SYSCALL_NUM] {
+        self.current.as_ref()
+            .unwrap()
+            .inner_exclusive_access()
+            .task_syscall_times
+    }
+
+    fn record_task_syscall(&self, syscall_id: usize) {
+        self.current.as_ref()
+            .unwrap()
+            .inner_exclusive_access()
+            .task_syscall_times[syscall_id] += 1;
+    }
+
+    fn get_task_first_run_time(&self) -> usize {
+        self.current.as_ref()
+            .unwrap()
+            .inner_exclusive_access()
+            .task_first_run_time
+            .unwrap()
+    }
+
+    fn get_task_memory_set(&self) -> Arc<UPSafeCell<MemorySet>> {
+        self.current.as_ref()
+            .unwrap()
+            .inner_exclusive_access()
+            .memory_set
+            .clone()
+    }
 }
 
 lazy_static! {
@@ -61,6 +94,9 @@ pub fn run_tasks() {
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+            if task_inner.task_first_run_time.is_none() {
+                task_inner.task_first_run_time = Some(get_time_ms());
+            }
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually
@@ -108,4 +144,24 @@ pub fn schedule(switched_task_cx_ptr: *mut TaskContext) {
     unsafe {
         __switch(switched_task_cx_ptr, idle_task_cx_ptr);
     }
+}
+
+/// Get the current task system call table
+pub fn get_current_task_syscall_times() -> [u32; MAX_SYSCALL_NUM] {
+    PROCESSOR.exclusive_access().get_task_syscall_times()
+}
+
+/// Record the syscall id called by the current task
+pub fn record_task_syscall(syscall_id: usize) {
+    PROCESSOR.exclusive_access().record_task_syscall(syscall_id);
+}
+
+/// Get the first running time of the current task
+pub fn get_current_task_first_run_time() -> usize {
+    PROCESSOR.exclusive_access().get_task_first_run_time()
+}
+
+///
+pub fn get_current_task_memory_set() -> Arc<UPSafeCell<MemorySet>> {
+    PROCESSOR.exclusive_access().get_task_memory_set()
 }

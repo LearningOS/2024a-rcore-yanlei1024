@@ -300,6 +300,40 @@ impl MemorySet {
             false
         }
     }
+
+        /// Check whether the requested memory address conflicts
+    pub fn conflicts_check(&self, start_va: VirtAddr, end_va: VirtAddr) -> bool {
+        let start_vpn: VirtPageNum = start_va.floor();
+        let end_vpn: VirtPageNum = end_va.ceil();
+        for area in &self.areas {
+            let area_l = area.vpn_range.get_start();
+            let area_r = area.vpn_range.get_end();
+            if area_l <= start_vpn && start_vpn < area_r { return true; }
+            if area_l < end_vpn && end_vpn <= area_r { return true; }
+            if start_vpn <= area_l && end_vpn >= area_r { return true; }
+        }
+        false
+    }
+
+    /// Freeing a memory block
+    pub fn remove_framed_area(&mut self, start_va: VirtAddr, end_va: VirtAddr) -> isize {
+        let start_vpn: VirtPageNum = start_va.floor();
+        let end_vpn: VirtPageNum = end_va.ceil();
+        let mut index = (0, false);
+        for area in &mut self.areas {
+            if start_vpn == area.vpn_range.get_start() && end_vpn == area.vpn_range.get_end() {
+                area.unmap(&mut self.page_table);
+                index.1 = true;
+                break;
+            }
+            index.0 += 1;
+        }
+        if !index.1 {
+            return -1;
+        }
+        self.areas.remove(index.0);
+        0
+    }
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
