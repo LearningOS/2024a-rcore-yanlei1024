@@ -9,6 +9,8 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
 
+const BIG_STRIDE: u8 = u8::MAX;
+
 /// Task control block structure
 ///
 /// Directly save the contents that will not change during running
@@ -34,6 +36,30 @@ impl TaskControlBlock {
         let inner = self.inner_exclusive_access();
         let token = inner.memory_set.exclusive_access().token();
         token
+    }
+}
+
+impl PartialEq for TaskControlBlock {
+    fn eq(&self, other: &Self) -> bool {
+        let self_stride = self.inner_exclusive_access().stride;
+        let other_stride = other.inner_exclusive_access().stride;
+        self_stride == other_stride
+    }
+}
+
+impl Eq for TaskControlBlock {}
+
+impl PartialOrd for TaskControlBlock {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(&other))
+    }
+}
+
+impl Ord for TaskControlBlock {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        let self_tcb = self.inner_exclusive_access();
+        let other_tcb = other.inner_exclusive_access();
+        other_tcb.stride.cmp(&self_tcb.stride)
     }
 }
 
@@ -75,6 +101,9 @@ pub struct TaskControlBlockInner {
 
     /// The time the task was first run
     pub task_first_run_time: Option<usize>, 
+
+    /// (Overflow buffer, stride, priority, pass)
+    pub stride: (usize, usize, u8, u8), 
 }
 
 impl TaskControlBlockInner {
@@ -91,6 +120,15 @@ impl TaskControlBlockInner {
     }
     pub fn is_zombie(&self) -> bool {
         self.get_status() == TaskStatus::Zombie
+    }
+    pub fn update_stride(&mut self) {
+        let pass = self.stride.3 as usize;
+        if pass > usize::MAX - self.stride.1 {
+            self.stride.0 += 1;
+            self.stride.1 = pass - self.stride.1;
+        } else {
+            self.stride.1 += pass;
+        }
     }
 }
 
@@ -127,6 +165,7 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     task_syscall_times: [0; MAX_SYSCALL_NUM], 
                     task_first_run_time: None, 
+                    stride: (0, 0, 16 , BIG_STRIDE / 16), 
                 })
             },
         };
@@ -202,6 +241,7 @@ impl TaskControlBlock {
                     program_brk: parent_inner.program_brk,
                     task_syscall_times: [0; MAX_SYSCALL_NUM], 
                     task_first_run_time: None, 
+                    stride: (0, 0, 16 , BIG_STRIDE / 16), 
                 })
             },
         });
@@ -246,6 +286,18 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+
+    ///
+    pub fn update_stride(&self) {
+        self.inner_exclusive_access().update_stride();
+    }
+
+    ///
+    pub fn set_priority(&self, prio: usize) -> usize {
+        self.inner_exclusive_access().stride.2 = prio as u8;
+        self.inner_exclusive_access().stride.3 = BIG_STRIDE / prio as u8;
+        prio
     }
 }
 

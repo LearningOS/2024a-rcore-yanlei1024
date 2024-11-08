@@ -1,31 +1,69 @@
 //!Implementation of [`TaskManager`]
 use super::TaskControlBlock;
 use crate::sync::UPSafeCell;
-use alloc::collections::VecDeque;
+use alloc::collections::{BinaryHeap, VecDeque};
 use alloc::sync::Arc;
 use lazy_static::*;
+
+trait TaskManagerInterface {
+    fn new() -> Self;
+    fn add(&mut self, task: Arc<TaskControlBlock>);
+    fn fetch(&mut self) -> Option<Arc<TaskControlBlock>>;
+}
+
 ///A array of `TaskControlBlock` that is thread-safe
-pub struct TaskManager {
+pub struct TaskManagerFIFO {
     ready_queue: VecDeque<Arc<TaskControlBlock>>,
 }
 
 /// A simple FIFO scheduler.
-impl TaskManager {
+impl TaskManagerInterface for TaskManagerFIFO {
     ///Creat an empty TaskManager
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             ready_queue: VecDeque::new(),
         }
     }
     /// Add process back to ready queue
-    pub fn add(&mut self, task: Arc<TaskControlBlock>) {
+    fn add(&mut self, task: Arc<TaskControlBlock>) {
         self.ready_queue.push_back(task);
     }
     /// Take a process out of the ready queue
-    pub fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
+    fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
         self.ready_queue.pop_front()
     }
 }
+
+///
+pub struct TaskManagerStride {
+    ready_queue: BinaryHeap<Arc<TaskControlBlock>>,
+}
+
+/// A simple Stride scheduler.
+impl TaskManagerInterface for TaskManagerStride {
+    ///Creat an empty TaskManager
+    fn new() -> Self {
+        Self {
+            ready_queue: BinaryHeap::new(),
+        }
+    }
+    /// Add process back to ready queue
+    fn add(&mut self, task: Arc<TaskControlBlock>) {
+        self.ready_queue.push(task);
+    }
+    /// Take a process out of the ready queue
+    fn fetch(&mut self) -> Option<Arc<TaskControlBlock>> {
+        match self.ready_queue.pop() {
+            Some(tcb) => {
+                tcb.inner_exclusive_access().update_stride();
+                Some(tcb)
+            },
+            None => None,
+        }
+    }
+}
+
+type TaskManager = TaskManagerStride;
 
 lazy_static! {
     /// TASK_MANAGER instance through lazy_static!
